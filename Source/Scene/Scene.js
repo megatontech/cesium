@@ -1399,7 +1399,7 @@ define([
 
         if (scene.debugShowCommands || scene.debugShowFrustums) {
             executeDebugCommand(command, scene, passState);
-        } else if (scene.frameState.shadowMaps.length > 0 && command.receiveShadows && defined(command.derivedCommands.shadows.receiveCommand)) {
+        } else if (scene.frameState.shadowMaps.length > 0 && command.receiveShadows && defined(command.derivedCommands.shadows) && defined(command.derivedCommands.shadows.receiveCommand)) {
             command.derivedCommands.shadows.receiveCommand.execute(context, passState);
         } else {
             command.execute(context, passState);
