@@ -34,6 +34,12 @@ define([
         this.commandList = [];
 
         /**
+         * An array of shadow maps.
+         * @type {ShadowMap[]}
+         */
+        this.shadowMaps = [];
+
+        /**
          * The current mode of the scene.
          *
          * @type {SceneMode}
@@ -185,6 +191,18 @@ define([
         * @default 1.0
         */
         this.terrainExaggeration = 1.0;
+
+        /**
+        * The near plane of the scene's frustum commands. Used for fitting the shadow map.
+        * @type {Number}
+        */
+        this.shadowNear = 1.0;
+
+        /**
+        * The far plane of the scene's frustum commands. Used for fitting the shadow map.
+        * @type {Number}
+        */
+        this.shadowFar = 10000.0;
     }
 
     FrameState.prototype.addCommand = function(command) {

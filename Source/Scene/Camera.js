@@ -251,30 +251,8 @@ define([
     Camera.DEFAULT_VIEW_FACTOR = 0.5;
 
     function updateViewMatrix(camera) {
-        var r = camera._right;
-        var u = camera._up;
-        var d = camera._direction;
-        var e = camera._position;
-
-        var viewMatrix = camera._viewMatrix;
-        viewMatrix[0] = r.x;
-        viewMatrix[1] = u.x;
-        viewMatrix[2] = -d.x;
-        viewMatrix[3] = 0.0;
-        viewMatrix[4] = r.y;
-        viewMatrix[5] = u.y;
-        viewMatrix[6] = -d.y;
-        viewMatrix[7] = 0.0;
-        viewMatrix[8] = r.z;
-        viewMatrix[9] = u.z;
-        viewMatrix[10] = -d.z;
-        viewMatrix[11] = 0.0;
-        viewMatrix[12] = -Cartesian3.dot(r, e);
-        viewMatrix[13] = -Cartesian3.dot(u, e);
-        viewMatrix[14] = Cartesian3.dot(d, e);
-        viewMatrix[15] = 1.0;
-
-        Matrix4.multiply(viewMatrix, camera._actualInvTransform, camera._viewMatrix);
+        Matrix4.computeView(camera._direction, camera._up, camera._right, camera._position, camera._viewMatrix);
+        Matrix4.multiply(camera._viewMatrix, camera._actualInvTransform, camera._viewMatrix);
         Matrix4.inverseTransformation(camera._viewMatrix, camera._invViewMatrix);
     }
 
@@ -422,18 +400,21 @@ define([
         var direction = camera._direction;
         var directionChanged = !Cartesian3.equals(direction, camera.direction);
         if (directionChanged) {
+            Cartesian3.normalize(camera.direction, camera.direction);
             direction = Cartesian3.clone(camera.direction, camera._direction);
         }
 
         var up = camera._up;
         var upChanged = !Cartesian3.equals(up, camera.up);
         if (upChanged) {
+            Cartesian3.normalize(camera.up, camera.up);
             up = Cartesian3.clone(camera.up, camera._up);
         }
 
         var right = camera._right;
         var rightChanged = !Cartesian3.equals(right, camera.right);
         if (rightChanged) {
+            Cartesian3.normalize(camera.right, camera.right);
             right = Cartesian3.clone(camera.right, camera._right);
         }
 
@@ -491,9 +472,6 @@ define([
             var det = Cartesian3.dot(direction, Cartesian3.cross(up, right, scratchCartesian));
             if (Math.abs(1.0 - det) > CesiumMath.EPSILON2) {
                 //orthonormalize axes
-                direction = Cartesian3.normalize(direction, camera._direction);
-                Cartesian3.clone(direction, camera.direction);
-
                 var invUpMag = 1.0 / Cartesian3.magnitudeSquared(up);
                 var scalar = Cartesian3.dot(up, direction) * invUpMag;
                 var w0 = Cartesian3.multiplyByScalar(direction, scalar, scratchCartesian);
@@ -1019,7 +997,7 @@ define([
      *     destination : Cesium.Rectangle.fromDegrees(west, south, east, north)
      * });
      *
-     * // 5. Setposition with an orientation using unit vectors.
+     * // 5. Set position with an orientation using unit vectors.
      * viewer.camera.setView({
      *     destination : Cesium.Cartesian3.fromDegrees(-122.19, 46.25, 5000.0),
      *     orientation : {
@@ -2506,13 +2484,22 @@ define([
 
             // Make sure camera doesn't zoom outside set limits
             if (defined(sscc)) {
-                destinationCartographic.height = CesiumMath.clamp(destinationCartographic.height, sscc.minimumZoomDistance, sscc.maximumZoomDistance);
+                //The computed height for rectangle in 2D/CV is stored in the 'z' component of Cartesian3
+                if (mode !== SceneMode.SCENE3D && isRectangle) {
+                    destination.z = CesiumMath.clamp(destination.z, sscc.minimumZoomDistance, sscc.maximumZoomDistance);
+                } else {
+                    destinationCartographic.height = CesiumMath.clamp(destinationCartographic.height, sscc.minimumZoomDistance, sscc.maximumZoomDistance);
+                }
             }
 
             // The max height in 2D might be lower than the max height for sscc.
             if (mode === SceneMode.SCENE2D) {
                 var maxHeight = ellipsoid.maximumRadius * Math.PI * 2.0;
-                destinationCartographic.height = Math.min(destinationCartographic.height, maxHeight);
+                if (isRectangle) {
+                    destination.z = Math.min(destination.z, maxHeight);
+                } else {
+                    destinationCartographic.height = Math.min(destinationCartographic.height, maxHeight);
+                }
             }
 
             //Only change if we clamped the height
@@ -2841,6 +2828,7 @@ define([
     Camera.clone = function(camera, result) {
         if (!defined(result)) {
             result = new Camera(camera._scene);
+            result.frustum = camera.frustum.clone(); // Allocate a new frustum of the correct type
         }
 
         Cartesian3.clone(camera.position, result.position);
@@ -2848,6 +2836,12 @@ define([
         Cartesian3.clone(camera.up, result.up);
         Cartesian3.clone(camera.right, result.right);
         Matrix4.clone(camera._transform, result.transform);
+        result._transformChanged = true;
+
+        // Clone frustum only if it is the same type
+        if (defined(camera.frustum.left) === defined(result.frustum.left)) {
+            camera.frustum.clone(result.frustum);
+        }
 
         return result;
     };
