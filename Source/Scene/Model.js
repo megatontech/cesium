@@ -334,8 +334,8 @@ define([
      * @param {Boolean} [options.asynchronous=true] Determines if model WebGL resource creation will be spread out over several frames or block until completion once all glTF files are loaded.
      * @param {Boolean} [options.debugShowBoundingVolume=false] For debugging only. Draws the bounding sphere for each draw command in the model.
      * @param {Boolean} [options.debugWireframe=false] For debugging only. Draws the model in wireframe.
-     * @param {Boolean} [options.castShadows=true] Determines whether this model will cast shadows when shadow mapping is enabled.
-     * @param {Boolean} [options.receiveShadows=true] Determines whether this model will receive shadows when shadow mapping is enabled.
+     * @param {Boolean} [options.castShadows=true] Determines whether the model will cast shadows from each light source.
+     * @param {Boolean} [options.receiveShadows=true] Determines whether the model will receive shadows from any shadow casters in the scene.
      *
      * @exception {DeveloperError} bgltf is not a valid Binary glTF file.
      * @exception {DeveloperError} Only glTF Binary version 1 is supported.
@@ -824,7 +824,7 @@ define([
         },
 
         /**
-         * Determines whether the model will cast shadows when shadow mapping is enabled.
+         * Determines whether the model will cast shadows from each light source.
          *
          * @memberof Model.prototype
          *
@@ -848,7 +848,7 @@ define([
         },
 
         /**
-         * Determines whether the model will receive shadows when shadow mapping is enabled.
+         * Determines whether the model will receive shadows from any shadow casters in the scene.
          *
          * @memberof Model.prototype
          *
@@ -964,15 +964,15 @@ define([
      * @param {Matrix4} [options.modelMatrix=Matrix4.IDENTITY] The 4x4 transformation matrix that transforms the model from model to world coordinates.
      * @param {Number} [options.scale=1.0] A uniform scale applied to this model.
      * @param {Number} [options.minimumPixelSize=0.0] The approximate minimum pixel size of the model regardless of zoom.
-     * @param {Number} [options.maxiumumScale] The maximum scale for the model.
+     * @param {Number} [options.maximumScale] The maximum scale for the model.
      * @param {Object} [options.id] A user-defined object to return when the model is picked with {@link Scene#pick}.
      * @param {Boolean} [options.allowPicking=true] When <code>true</code>, each glTF mesh and primitive is pickable with {@link Scene#pick}.
      * @param {Boolean} [options.incrementallyLoadTextures=true] Determine if textures may continue to stream in after the model is loaded.
      * @param {Boolean} [options.asynchronous=true] Determines if model WebGL resource creation will be spread out over several frames or block until completion once all glTF files are loaded.
      * @param {Boolean} [options.debugShowBoundingVolume=false] For debugging only. Draws the bounding sphere for each {@link DrawCommand} in the model.
      * @param {Boolean} [options.debugWireframe=false] For debugging only. Draws the model in wireframe.
-     * @param {Boolean} [options.castShadows=true] Determines whether this model will cast shadows when shadow mapping is enabled.
-     * @param {Boolean} [options.receiveShadows=true] Determines whether this model will receive shadows when shadow mapping is enabled.
+     * @param {Boolean} [options.castShadows=true] Determines whether the model will cast shadows from each light source.
+     * @param {Boolean} [options.receiveShadows=true] Determines whether the model will receive shadows from any shadow casters in the scene.
      *
      * @returns {Model} The newly created model.
      *

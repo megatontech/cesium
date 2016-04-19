@@ -251,7 +251,7 @@ define([
     Camera.DEFAULT_VIEW_FACTOR = 0.5;
 
     function updateViewMatrix(camera) {
-        Matrix4.computeView(camera._direction, camera._up, camera._right, camera._position, camera._viewMatrix);
+        Matrix4.computeView(camera._position, camera._direction, camera._up, camera._right, camera._viewMatrix);
         Matrix4.multiply(camera._viewMatrix, camera._actualInvTransform, camera._viewMatrix);
         Matrix4.inverseTransformation(camera._viewMatrix, camera._invViewMatrix);
     }
@@ -879,10 +879,7 @@ define([
         camera._setTransform(currentTransform);
     }
 
-    function setView2D(camera, position, heading, convert) {
-        var pitch = -CesiumMath.PI_OVER_TWO;
-        var roll = 0.0;
-
+    function setView2D(camera, position, convert) {
         var currentTransform = Matrix4.clone(camera.transform, scratchSetViewTransform1);
         camera._setTransform(Matrix4.IDENTITY);
 
@@ -907,12 +904,6 @@ define([
                 frustum.bottom = -frustum.top;
             }
         }
-
-        var rotQuat = Quaternion.fromHeadingPitchRoll(heading - CesiumMath.PI_OVER_TWO, pitch, roll, scratchSetViewQuaternion);
-        var rotMat = Matrix3.fromQuaternion(rotQuat, scratchSetViewMatrix3);
-
-        Matrix3.getColumn(rotMat, 2, camera.up);
-        Cartesian3.cross(camera.direction, camera.up, camera.right);
 
         camera._setTransform(currentTransform);
     }
@@ -962,8 +953,8 @@ define([
      * @param {Object} options Object with the following properties:
      * @param {Cartesian3|Rectangle} [options.destination] The final position of the camera in WGS84 (world) coordinates or a rectangle that would be visible from a top-down view.
      * @param {Object} [options.orientation] An object that contains either direction and up properties or heading, pith and roll properties. By default, the direction will point
-     * towards the center of the frame in 3D and in the negative z direction in Columbus view or 2D. The up direction will point towards local north in 3D and in the positive
-     * y direction in Columbus view or 2D.
+     * towards the center of the frame in 3D and in the negative z direction in Columbus view. The up direction will point towards local north in 3D and in the positive
+     * y direction in Columbus view. Orientation is not used in 2D.
      * @param {Matrix4} [options.endTransform] Transform matrix representing the reference frame of the camera.
      *
      * @example
@@ -1037,7 +1028,7 @@ define([
         if (mode === SceneMode.SCENE3D) {
             setView3D(this, destination, heading, pitch, roll);
         } else if (mode === SceneMode.SCENE2D) {
-            setView2D(this, destination, heading, convert);
+            setView2D(this, destination, convert);
         } else {
             setViewCV(this, destination, heading, pitch, roll, convert);
         }
@@ -2395,8 +2386,8 @@ define([
      * @param {Object} options Object with the following properties:
      * @param {Cartesian3|Rectangle} options.destination The final position of the camera in WGS84 (world) coordinates or a rectangle that would be visible from a top-down view.
      * @param {Object} [options.orientation] An object that contains either direction and up properties or heading, pith and roll properties. By default, the direction will point
-     * towards the center of the frame in 3D and in the negative z direction in Columbus view or 2D. The up direction will point towards local north in 3D and in the positive
-     * y direction in Columbus view or 2D.
+     * towards the center of the frame in 3D and in the negative z direction in Columbus view. The up direction will point towards local north in 3D and in the positive
+     * y direction in Columbus view.  Orientation is not used in 2D.
      * @param {Number} [options.duration] The duration of the flight in seconds. If omitted, Cesium attempts to calculate an ideal duration based on the distance to be traveled by the flight.
      * @param {Camera~FlightCompleteCallback} [options.complete] The function to execute when the flight is complete.
      * @param {Camera~FlightCancelledCallback} [options.cancel] The function to execute if the flight is cancelled.
@@ -2828,7 +2819,6 @@ define([
     Camera.clone = function(camera, result) {
         if (!defined(result)) {
             result = new Camera(camera._scene);
-            result.frustum = camera.frustum.clone(); // Allocate a new frustum of the correct type
         }
 
         Cartesian3.clone(camera.position, result.position);
@@ -2837,11 +2827,6 @@ define([
         Cartesian3.clone(camera.right, result.right);
         Matrix4.clone(camera._transform, result.transform);
         result._transformChanged = true;
-
-        // Clone frustum only if it is the same type
-        if (defined(camera.frustum.left) === defined(result.frustum.left)) {
-            camera.frustum.clone(result.frustum);
-        }
 
         return result;
     };

@@ -5,7 +5,7 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no">
     <meta name="description" content="Shadow maps.">
-    <meta name="cesium-sandcastle-labels" content="Tutorials,Showcases">
+    <meta name="cesium-sandcastle-labels" content="Development">
     <title>Cesium Demo</title>
     <script type="text/javascript" src="../Sandcastle-header.js"></script>
     <script type="text/javascript" src="../../../ThirdParty/requirejs-2.1.20/require.js"></script>
@@ -120,10 +120,6 @@
             <td><input type="checkbox" data-bind="checked: softShadows, enable: softShadowsEnabled"/></td>
         </tr>
         <tr>
-            <td>Exponential Shadows</td>
-            <td><input type="checkbox" data-bind="checked: exponentialShadows"/></td>
-        </tr>
-        <tr>
             <td>Location</td>
             <td><select data-bind="options: locationOptions, value: location"/></td>
         </tr>
@@ -215,7 +211,6 @@ var viewModel = {
     fitNearFarEnabled : true,
     softShadows : false,
     softShadowsEnabled : true,
-    exponentialShadows : false,
     cascadeOptions : [1, 4],
     cascades : 4,
     cascadesEnabled : true,
@@ -248,10 +243,10 @@ var viewModel = {
             polygonOffsetFactor : 1.1,
             polygonOffsetUnits : 4.0,
             normalOffset : true,
-            normalOffsetScale : 0.1,
+            normalOffsetScale : 0.2,
             normalShading : true,
-            normalShadingSmooth : 0.1,
-            depthBias : 0.0001
+            normalShadingSmooth : 0.05,
+            depthBias : 0.00001
         }),
         new BiasOptions({
             type : 'point',
@@ -365,7 +360,6 @@ Cesium.knockout.getObservable(viewModel, 'terrainReceive').subscribe(updateSetti
 Cesium.knockout.getObservable(viewModel, 'fitNearFar').subscribe(updateSettings);
 Cesium.knockout.getObservable(viewModel, 'cascadeColors').subscribe(updateShadows);
 Cesium.knockout.getObservable(viewModel, 'softShadows').subscribe(updateShadows);
-Cesium.knockout.getObservable(viewModel, 'exponentialShadows').subscribe(updateShadows);
 Cesium.knockout.getObservable(viewModel, 'cascades').subscribe(updateShadows);
 Cesium.knockout.getObservable(viewModel, 'lightSource').subscribe(updateShadows);
 Cesium.knockout.getObservable(viewModel, 'size').subscribe(updateSettings);
@@ -402,7 +396,7 @@ function updateLightDirection() {
 
 function updateSettings() {
     shadowMap._maximumDistance = Number(viewModel.distance);
-    shadowMap._radius = Number(viewModel.radius);
+    shadowMap._pointLightRadius = Number(viewModel.radius);
     shadowMap._fitNearFar = viewModel.fitNearFar;
     shadowMap.darkness = viewModel.darkness;
     shadowMap.debugShow = viewModel.debug;
@@ -421,7 +415,6 @@ function updateShadows() {
     var lightSource = viewModel.lightSource;
     var cascadeColors = viewModel.cascadeColors;
     var softShadows = viewModel.softShadows;
-    var exponentialShadows = viewModel.exponentialShadows;
 
     var lightCamera;
     if (lightSource === 'Freeform') {
@@ -467,8 +460,6 @@ function updateShadows() {
         });
     }
 
-    shadowMap._exponentialShadows = exponentialShadows;
-
     // Update biases
     for (var i = 0; i < viewModel.biasModes.length; ++i) {
         var biasMode = viewModel.biasModes[i];
@@ -484,7 +475,7 @@ function updateShadows() {
     }
 
     // Update render states for when polygon offset values change
-    shadowMap._createRenderStates();
+    shadowMap.debugCreateRenderStates();
 
     updateSettings();
     updateUI();

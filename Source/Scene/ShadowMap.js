@@ -7,6 +7,7 @@ define([
         '../Core/Cartesian3',
         '../Core/Cartesian4',
         '../Core/Cartographic',
+        '../Core/clone',
         '../Core/Color',
         '../Core/ColorGeometryInstanceAttribute',
         '../Core/combine',
@@ -60,6 +61,7 @@ define([
         Cartesian3,
         Cartesian4,
         Cartographic,
+        clone,
         Color,
         ColorGeometryInstanceAttribute,
         combine,
@@ -116,8 +118,9 @@ define([
      * @param {Object} options An object containing the following properties:
      * @param {Context} options.context The context in which to create the shadow map.
      * @param {Camera} options.lightCamera A camera representing the light source.
+     * @param {Boolean} [options.enabled=true] Whether the shadow map is enabled.
      * @param {Boolean} [options.isPointLight=false] Whether the light source is a point light. Point light shadows do not use cascades.
-     * @param {Boolean} [options.radius=100.0] Radius of the point light.
+     * @param {Boolean} [options.pointLightRadius=100.0] Radius of the point light.
      * @param {Boolean} [options.cascadesEnabled=true] Use multiple shadow maps to cover different partitions of the view frustum.
      * @param {Number} [options.numberOfCascades=4] The number of cascades to use for the shadow map. Supported values are one and four.
      * @param {Number} [options.size=1024] The width and height, in pixels, of each shadow map.
@@ -148,10 +151,10 @@ define([
         }
         //>>includeEnd('debug');
 
-        this.enabled = true;
+        this.enabled = defaultValue(options.enabled, true);
         this.softShadows = defaultValue(options.softShadows, false);
         this.darkness = defaultValue(options.darkness, 0.3);
-        this._exponentialShadows = false;
+        this._darkness = this.darkness;
 
         this._outOfView = false;
         this._outOfViewPrevious = false;
@@ -173,10 +176,10 @@ define([
             polygonOffsetFactor : 1.1,
             polygonOffsetUnits : 4.0,
             normalOffset : true,
-            normalOffsetScale : 0.1,
+            normalOffsetScale : 0.2,
             normalShading : true,
-            normalShadingSmooth : 0.1,
-            depthBias : 0.0001
+            normalShadingSmooth : 0.05,
+            depthBias : 0.00001
         };
 
         this._pointBias = {
@@ -211,13 +214,13 @@ define([
         this._boundingSphere = new BoundingSphere();
 
         this._isPointLight = defaultValue(options.isPointLight, false);
-        this._radius = defaultValue(options.radius, 100.0);
-        this._usesCubeMap = true;
+        this._pointLightRadius = defaultValue(options.pointLightRadius, 100.0);
 
         this._cascadesEnabled = this._isPointLight ? false : defaultValue(options.cascadesEnabled, true);
         this._numberOfCascades = !this._cascadesEnabled ? 0 : defaultValue(options.numberOfCascades, 4);
         this._fitNearFar = true;
         this._maximumDistance = 5000.0;
+        this._maximumCascadeDistances = [50.0, 300.0, Number.MAX_VALUE, Number.MAX_VALUE];
 
         this._isSpotLight = false;
         if (this._cascadesEnabled) {
@@ -243,18 +246,9 @@ define([
             numberOfPasses = this._numberOfCascades;
         }
 
-        this._numberOfPasses = numberOfPasses;
-        this._passCameras = new Array(numberOfPasses);
-        this._passStates = new Array(numberOfPasses);
-        this._passFramebuffers = new Array(numberOfPasses);
-        this._passTextureOffsets = new Array(numberOfPasses);
-        this._passCommands = new Array(numberOfPasses);
-        this._passCullingVolumes = new Array(numberOfPasses);
-
+        this._passes = new Array(numberOfPasses);
         for (var i = 0; i < numberOfPasses; ++i) {
-            this._passCameras[i] = new ShadowMapCamera();
-            this._passStates[i] = new PassState(context);
-            this._passCommands[i] = [];
+            this._passes[i] = new ShadowPass(context);
         }
 
         this._commandList = [];
@@ -291,10 +285,19 @@ define([
         this.setSize(this._shadowMapSize);
     }
 
+    function ShadowPass(context) {
+        this.camera = new ShadowMapCamera();
+        this.passState = new PassState(context);
+        this.framebuffer = undefined;
+        this.textureOffsets = undefined;
+        this.commandList = [];
+        this.cullingVolume = undefined;
+    }
+
     function createRenderState(colorMask, bias) {
         return RenderState.fromCache({
             cull : {
-                enabled : true, // TODO : need to handle objects that don't use back face culling, like walls
+                enabled : true,
                 face : CullFace.BACK
             },
             depthTest : {
@@ -323,8 +326,10 @@ define([
         shadowMap._pointRenderState = createRenderState(colorMask, shadowMap._pointBias);
     }
 
-    // For debug purposes only. Call this when polygonOffset values change.
-    ShadowMap.prototype._createRenderStates = function() {
+    /**
+     * @private
+     */
+    ShadowMap.prototype.debugCreateRenderStates = function() {
         createRenderStates(this);
     };
 
@@ -365,70 +370,25 @@ define([
         },
 
         /**
-         * The number of passes required for rendering shadows.
+         * The passes used for rendering shadows. Each face of a point light or each cascade for a cascaded shadow map is a separate pass.
          *
          * @memberof ShadowMap.prototype
-         * @type {Number}
+         * @type {ShadowPass[]}
          * @readonly
          */
-        numberOfPasses : {
+        passes : {
             get : function() {
-                return this._numberOfPasses;
+                return this._passes;
             }
         },
 
         /**
-         * The pass states.
-         *
-         * @memberof ShadowMap.prototype
-         * @type {PassState[]}
-         * @readonly
-         */
-        passStates : {
-            get : function() {
-                return this._passStates;
-            }
-        },
-
-        /**
-         * The pass cameras.
-         *
-         * @memberof ShadowMap.prototype
-         * @type {ShadowMapCamera[]}
-         * @readonly
-         */
-        passCameras : {
-            get : function() {
-                return this._passCameras;
-            }
-        },
-
-        /**
-         * The list of commands that are rendered into each pass.
+         * Commands that are rendered into the shadow map this frame.
          *
          * @memberof ShadowMap.prototype
          * @type {DrawCommand[]}
          * @readonly
          */
-        passCommands : {
-            get : function() {
-                return this._passCommands;
-            }
-        },
-
-        /**
-         * The culling volume for each pass.
-         *
-         * @memberof ShadowMap.prototype
-         * @type {CullingVolume}
-         * @readonly
-         */
-        passCullingVolumes : {
-            get : function() {
-                return this._passCullingVolumes;
-            }
-        },
-
         commandList : {
             get : function() {
                 return this._commandList;
@@ -470,18 +430,20 @@ define([
          */
         pointLightRadius : {
             get : function() {
-                return this._radius;
+                return this._pointLightRadius;
             }
         }
     });
 
     function destroyFramebuffer(shadowMap) {
-        for (var i = 0; i < shadowMap._numberOfPasses; ++i) {
-            var framebuffer = shadowMap._passFramebuffers[i];
+        var length = shadowMap._passes.length;
+        for (var i = 0; i < length; ++i) {
+            var pass = shadowMap._passes[i];
+            var framebuffer = pass.framebuffer;
             if (defined(framebuffer) && !framebuffer.isDestroyed()) {
                 framebuffer.destroy();
             }
-            shadowMap._passFramebuffers[i] = undefined;
+            pass.framebuffer = undefined;
         }
 
         // Destroy the framebuffer attachments
@@ -522,9 +484,11 @@ define([
             destroyAttachments : false
         });
 
-        for (var i = 0; i < shadowMap._numberOfPasses; ++i) {
-            shadowMap._passFramebuffers[i] = framebuffer;
-            shadowMap._passStates[i].framebuffer = framebuffer;
+        var length = shadowMap._passes.length;
+        for (var i = 0; i < length; ++i) {
+            var pass = shadowMap._passes[i];
+            pass.framebuffer = framebuffer;
+            pass.passState.framebuffer = framebuffer;
         }
 
         shadowMap._shadowMapTexture = colorTexture;
@@ -548,9 +512,11 @@ define([
             destroyAttachments : false
         });
 
-        for (var i = 0; i < shadowMap._numberOfPasses; ++i) {
-            shadowMap._passFramebuffers[i] = framebuffer;
-            shadowMap._passStates[i].framebuffer = framebuffer;
+        var length = shadowMap._passes.length;
+        for (var i = 0; i < length; ++i) {
+            var pass = shadowMap._passes[i];
+            pass.framebuffer = framebuffer;
+            pass.passState.framebuffer = framebuffer;
         }
 
         shadowMap._shadowMapTexture = depthStencilTexture;
@@ -583,8 +549,9 @@ define([
                 colorTextures : [faces[i]],
                 destroyAttachments : false
             });
-            shadowMap._passFramebuffers[i] = framebuffer;
-            shadowMap._passStates[i].framebuffer = framebuffer;
+            var pass = shadowMap._passes[i];
+            pass.framebuffer = framebuffer;
+            pass.passState.framebuffer = framebuffer;
         }
 
         shadowMap._shadowMapTexture = cubeMap;
@@ -593,7 +560,7 @@ define([
     }
 
     function createFramebuffer(shadowMap, context) {
-        if (shadowMap._isPointLight && shadowMap._usesCubeMap) {
+        if (shadowMap._isPointLight) {
             createFramebufferCube(shadowMap, context);
         } else if (shadowMap._usesDepthTexture) {
             createFramebufferDepth(shadowMap, context);
@@ -606,7 +573,7 @@ define([
 
     function checkFramebuffer(shadowMap, context) {
         // Attempt to make an FBO with only a depth texture. If it fails, fallback to a color texture.
-        if (shadowMap._usesDepthTexture && (shadowMap._passFramebuffers[0].status !== WebGLConstants.FRAMEBUFFER_COMPLETE)) {
+        if (shadowMap._usesDepthTexture && (shadowMap._passes[0].framebuffer.status !== WebGLConstants.FRAMEBUFFER_COMPLETE)) {
             shadowMap._usesDepthTexture = false;
             createRenderStates(shadowMap);
             destroyFramebuffer(shadowMap);
@@ -615,7 +582,7 @@ define([
     }
 
     function updateFramebuffer(shadowMap, context) {
-        if (!defined(shadowMap._passFramebuffers[0]) || (shadowMap._shadowMapTexture.width !== shadowMap._textureSize.x)) {
+        if (!defined(shadowMap._passes[0].framebuffer) || (shadowMap._shadowMapTexture.width !== shadowMap._textureSize.x)) {
             destroyFramebuffer(shadowMap);
             createFramebuffer(shadowMap, context);
             checkFramebuffer(shadowMap, context);
@@ -624,34 +591,35 @@ define([
 
     function clearFramebuffer(shadowMap, context, shadowPass) {
         shadowPass = defaultValue(shadowPass, 0);
-        if ((shadowMap._isPointLight && shadowMap._usesCubeMap) || (shadowPass === 0)) {
-            shadowMap._clearCommand.framebuffer = shadowMap._passFramebuffers[shadowPass];
+        if (shadowMap._isPointLight || (shadowPass === 0)) {
+            shadowMap._clearCommand.framebuffer = shadowMap._passes[shadowPass].framebuffer;
             shadowMap._clearCommand.execute(context, shadowMap._clearPassState);
         }
     }
 
     ShadowMap.prototype.setSize = function(size) {
         this._shadowMapSize = size;
-        var numberOfPasses = this._numberOfPasses;
+        var passes = this._passes;
+        var numberOfPasses = passes.length;
         var textureSize = this._textureSize;
 
-        if (this._isPointLight && this._usesCubeMap) {
+        if (this._isPointLight) {
             textureSize.x = size;
             textureSize.y = size;
             var faceViewport = new BoundingRectangle(0, 0, size, size);
-            this._passStates[0].viewport = faceViewport;
-            this._passStates[1].viewport = faceViewport;
-            this._passStates[2].viewport = faceViewport;
-            this._passStates[3].viewport = faceViewport;
-            this._passStates[4].viewport = faceViewport;
-            this._passStates[5].viewport = faceViewport;
+            passes[0].passState.viewport = faceViewport;
+            passes[1].passState.viewport = faceViewport;
+            passes[2].passState.viewport = faceViewport;
+            passes[3].passState.viewport = faceViewport;
+            passes[4].passState.viewport = faceViewport;
+            passes[5].passState.viewport = faceViewport;
         } else if (numberOfPasses === 1) {
             // +----+
             // |  1 |
             // +----+
             textureSize.x = size;
             textureSize.y = size;
-            this._passStates[0].viewport = new BoundingRectangle(0, 0, size, size);
+            passes[0].passState.viewport = new BoundingRectangle(0, 0, size, size);
         } else if (numberOfPasses === 4) {
             // +----+----+
             // |  3 |  4 |
@@ -660,24 +628,10 @@ define([
             // +----+----+
             textureSize.x = size * 2;
             textureSize.y = size * 2;
-            this._passStates[0].viewport = new BoundingRectangle(0, 0, size, size);
-            this._passStates[1].viewport = new BoundingRectangle(size, 0, size, size);
-            this._passStates[2].viewport = new BoundingRectangle(0, size, size, size);
-            this._passStates[3].viewport = new BoundingRectangle(size, size, size, size);
-        } else if (numberOfPasses === 6) {
-            // +----+----+----+
-            // |  4 |  5 |  6 |
-            // +----+----+----+
-            // |  1 |  2 |  3 |
-            // +----+----+----+
-            textureSize.x = size * 3;
-            textureSize.y = size * 2;
-            this._passStates[0].viewport = new BoundingRectangle(0, 0, size, size);
-            this._passStates[1].viewport = new BoundingRectangle(size, 0, size, size);
-            this._passStates[2].viewport = new BoundingRectangle(size * 2, 0, size, size);
-            this._passStates[3].viewport = new BoundingRectangle(0, size, size, size);
-            this._passStates[4].viewport = new BoundingRectangle(size, size, size, size);
-            this._passStates[5].viewport = new BoundingRectangle(size * 2, size, size, size);
+            passes[0].passState.viewport = new BoundingRectangle(0, 0, size, size);
+            passes[1].passState.viewport = new BoundingRectangle(size, 0, size, size);
+            passes[2].passState.viewport = new BoundingRectangle(0, size, size, size);
+            passes[3].passState.viewport = new BoundingRectangle(size, size, size, size);
         }
 
         // Update clear pass state
@@ -685,12 +639,13 @@ define([
 
         // Transforms shadow coordinates [0, 1] into the pass's region of the texture
         for (var i = 0; i < numberOfPasses; ++i) {
-            var viewport = this._passStates[i].viewport;
+            var pass = passes[i];
+            var viewport = pass.passState.viewport;
             var biasX = viewport.x / textureSize.x;
             var biasY = viewport.y / textureSize.y;
             var scaleX = viewport.width / textureSize.x;
             var scaleY = viewport.height / textureSize.y;
-            this._passTextureOffsets[i] = new Matrix4(scaleX, 0.0, 0.0, biasX, 0.0, scaleY, 0.0, biasY, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
+            pass.textureOffsets = new Matrix4(scaleX, 0.0, 0.0, biasX, 0.0, scaleY, 0.0, biasY, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0);
         }
     };
 
@@ -698,60 +653,69 @@ define([
 
     function createDebugShadowViewCommand(shadowMap, context) {
         var fs;
-        if (shadowMap._isPointLight && shadowMap._usesCubeMap) {
-            fs = 'uniform samplerCube u_shadowMapTextureCube; \n' +
+        if (shadowMap._isPointLight) {
+            fs = 'uniform samplerCube shadowMap_textureCube; \n' +
                  'varying vec2 v_textureCoordinates; \n' +
                  'void main() \n' +
                  '{ \n' +
                  '    vec2 uv = v_textureCoordinates; \n' +
                  '    vec3 dir; \n' +
                  ' \n' +
-                 '    if (uv.y < 0.5) { \n' +
-                 '        if (uv.x < 0.333) { \n' +
+                 '    if (uv.y < 0.5) \n' +
+                 '    { \n' +
+                 '        if (uv.x < 0.333) \n' +
+                 '        { \n' +
                  '            dir.x = -1.0; \n' +
                  '            dir.y = uv.x * 6.0 - 1.0; \n' +
                  '            dir.z = uv.y * 4.0 - 1.0; \n' +
                  '        } \n' +
-                 '        else if (uv.x < 0.666) { \n' +
+                 '        else if (uv.x < 0.666) \n' +
+                 '        { \n' +
                  '            dir.y = -1.0; \n' +
                  '            dir.x = uv.x * 6.0 - 3.0; \n' +
                  '            dir.z = uv.y * 4.0 - 1.0; \n' +
                  '        } \n' +
-                 '        else { \n' +
+                 '        else \n' +
+                 '        { \n' +
                  '            dir.z = -1.0; \n' +
                  '            dir.x = uv.x * 6.0 - 5.0; \n' +
                  '            dir.y = uv.y * 4.0 - 1.0; \n' +
                  '        } \n' +
-                 '    } else { \n' +
-                 '        if (uv.x < 0.333) { \n' +
+                 '    } \n' +
+                 '    else \n' +
+                 '    { \n' +
+                 '        if (uv.x < 0.333) \n' +
+                 '        { \n' +
                  '            dir.x = 1.0; \n' +
                  '            dir.y = uv.x * 6.0 - 1.0; \n' +
                  '            dir.z = uv.y * 4.0 - 3.0; \n' +
                  '        } \n' +
-                 '        else if (uv.x < 0.666) { \n' +
+                 '        else if (uv.x < 0.666) \n' +
+                 '        { \n' +
                  '            dir.y = 1.0; \n' +
                  '            dir.x = uv.x * 6.0 - 3.0; \n' +
                  '            dir.z = uv.y * 4.0 - 3.0; \n' +
                  '        } \n' +
-                 '        else { \n' +
+                 '        else \n' +
+                 '        { \n' +
                  '            dir.z = 1.0; \n' +
                  '            dir.x = uv.x * 6.0 - 5.0; \n' +
                  '            dir.y = uv.y * 4.0 - 3.0; \n' +
                  '        } \n' +
                  '    } \n' +
                  ' \n' +
-                 '    float shadow = czm_unpackDepth(textureCube(u_shadowMapTextureCube, dir)); \n' +
+                 '    float shadow = czm_unpackDepth(textureCube(shadowMap_textureCube, dir)); \n' +
                  '    gl_FragColor = vec4(vec3(shadow), 1.0); \n' +
                  '} \n';
         } else {
-            fs = 'uniform sampler2D u_shadowMapTexture; \n' +
+            fs = 'uniform sampler2D shadowMap_texture; \n' +
                  'varying vec2 v_textureCoordinates; \n' +
                  'void main() \n' +
                  '{ \n' +
 
                  (shadowMap._usesDepthTexture ?
-                 '    float shadow = texture2D(u_shadowMapTexture, v_textureCoordinates).r; \n' :
-                 '    float shadow = czm_unpackDepth(texture2D(u_shadowMapTexture, v_textureCoordinates)); \n') +
+                 '    float shadow = texture2D(shadowMap_texture, v_textureCoordinates).r; \n' :
+                 '    float shadow = czm_unpackDepth(texture2D(shadowMap_texture, v_textureCoordinates)); \n') +
 
                  '    gl_FragColor = vec4(vec3(shadow), 1.0); \n' +
                  '} \n';
@@ -759,10 +723,10 @@ define([
 
         var drawCommand = context.createViewportQuadCommand(fs, {
             uniformMap : {
-                u_shadowMapTexture : function() {
+                shadowMap_texture : function() {
                     return shadowMap._shadowMapTexture;
                 },
-                u_shadowMapTextureCube : function() {
+                shadowMap_textureCube : function() {
                     return shadowMap._shadowMapTexture;
                 }
             }
@@ -786,7 +750,8 @@ define([
 
         var debugCommand = shadowMap._debugShadowViewCommand;
         if (!defined(debugCommand)) {
-            debugCommand = shadowMap._debugShadowViewCommand = createDebugShadowViewCommand(shadowMap, context);
+            debugCommand = createDebugShadowViewCommand(shadowMap, context);
+            shadowMap._debugShadowViewCommand = debugCommand;
         }
 
         // Get a new RenderState for the updated viewport size
@@ -927,7 +892,7 @@ define([
                     if (enterFreezeFrame) {
                         // Recreate debug frustum when entering freeze frame mode
                         shadowMap._debugCascadeFrustums[i] = shadowMap._debugCascadeFrustums[i] && shadowMap._debugCascadeFrustums[i].destroy();
-                        shadowMap._debugCascadeFrustums[i] = createDebugFrustum(shadowMap._passCameras[i], debugCascadeColors[i]);
+                        shadowMap._debugCascadeFrustums[i] = createDebugFrustum(shadowMap._passes[i].camera, debugCascadeColors[i]);
                     }
                     shadowMap._debugCascadeFrustums[i].update(frameState);
                 }
@@ -936,7 +901,7 @@ define([
             if (!defined(shadowMap._debugLightFrustum) || shadowMap._needsUpdate) {
                 var translation = shadowMap._shadowMapCamera.positionWC;
                 var rotation = Quaternion.IDENTITY;
-                var uniformScale = shadowMap._radius * 2.0;
+                var uniformScale = shadowMap._pointLightRadius * 2.0;
                 var scale = Cartesian3.fromElements(uniformScale, uniformScale, uniformScale, scratchScale);
                 var modelMatrix = Matrix4.fromTranslationQuaternionRotationScale(translation, rotation, scale, scratchMatrix);
 
@@ -990,8 +955,6 @@ define([
     var scratchFrustum = new PerspectiveFrustum();
     var scratchCascadeDistances = new Array(4);
 
-    var maximumDistances = [50.0, 300.0, Number.MAX_VALUE, Number.MAX_VALUE];
-
     function computeCascades(shadowMap) {
         var shadowMapCamera = shadowMap._shadowMapCamera;
         var sceneCamera = shadowMap._sceneCamera;
@@ -1011,7 +974,7 @@ define([
         splits[numberOfCascades] = cameraFar;
 
         // Find initial splits
-        for (i = 0; i < numberOfCascades - 1; ++i) {
+        for (i = 0; i < numberOfCascades; ++i) {
             var p = (i + 1) / numberOfCascades;
             var logScale = cameraNear * Math.pow(ratio, p);
             var uniformScale = cameraNear + range * p;
@@ -1024,7 +987,7 @@ define([
         if (cameraNear < 100.0) {
             // Clamp each cascade to its maximum distance
             for (i = 0; i < numberOfCascades; ++i) {
-                cascadeDistances[i] = Math.min(cascadeDistances[i], maximumDistances[i]);
+                cascadeDistances[i] = Math.min(cascadeDistances[i], shadowMap._maximumCascadeDistances[i]);
             }
 
             // Recompute splits
@@ -1073,28 +1036,32 @@ define([
                 Cartesian3.maximumByComponent(corner, max, max);
             }
 
-            // Limit min to 0.0. Sometimes precision errors cause it to go slightly negative, which affects the frustum extent computations below.
+            // Limit light-space coordinates to the [0, 1] range
             min.x = Math.max(min.x, 0.0);
             min.y = Math.max(min.y, 0.0);
+            min.z = 0.0; // Always start cascade frustum at the top of the light frustum to capture objects in the light's path
+            max.x = Math.min(max.x, 1.0);
+            max.y = Math.min(max.y, 1.0);
+            max.z = Math.min(max.z, 1.0);
 
-            // Always start cascade frustum at the top of the light frustum to capture objects in the light's path
-            min.z = 0.0;
-
-            var cascadeCamera = shadowMap._passCameras[i];
+            var pass = shadowMap._passes[i];
+            var cascadeCamera = pass.camera;
             cascadeCamera.clone(shadowMapCamera); // PERFORMANCE_IDEA : could do a shallow clone for all properties except the frustum
-            cascadeCamera.frustum.left = left + min.x * (right - left);
-            cascadeCamera.frustum.right = left + max.x * (right - left);
-            cascadeCamera.frustum.bottom = bottom + min.y * (top - bottom);
-            cascadeCamera.frustum.top = bottom + max.y * (top - bottom);
-            cascadeCamera.frustum.near = near + min.z * (far - near);
-            cascadeCamera.frustum.far = near + max.z * (far - near);
 
-            shadowMap._passCullingVolumes[i] = cascadeCamera.frustum.computeCullingVolume(position, direction, up);
+            var frustum = cascadeCamera.frustum;
+            frustum.left = left + min.x * (right - left);
+            frustum.right = left + max.x * (right - left);
+            frustum.bottom = bottom + min.y * (top - bottom);
+            frustum.top = bottom + max.y * (top - bottom);
+            frustum.near = near + min.z * (far - near);
+            frustum.far = near + max.z * (far - near);
+
+            pass.cullingVolume = cascadeCamera.frustum.computeCullingVolume(position, direction, up);
 
             // Transforms from eye space to the cascade's texture space
             var cascadeMatrix = shadowMap._cascadeMatrices[i];
             Matrix4.multiply(cascadeCamera.getViewProjection(), sceneCamera.inverseViewMatrix, cascadeMatrix);
-            Matrix4.multiply(shadowMap._passTextureOffsets[i], cascadeMatrix, cascadeMatrix);
+            Matrix4.multiply(pass.textureOffsets, cascadeMatrix, cascadeMatrix);
         }
     }
 
@@ -1122,7 +1089,7 @@ define([
         Cartesian3.normalize(lightRight, lightRight);
         var lightPosition = Cartesian3.fromElements(0.0, 0.0, 0.0, scratchTranslation);
 
-        var lightView = Matrix4.computeView(lightDir, lightUp, lightRight, lightPosition, scratchLightView);
+        var lightView = Matrix4.computeView(lightPosition, lightDir, lightUp, lightRight, scratchLightView);
         var cameraToLight = Matrix4.multiply(lightView, inverseViewProjection, scratchMatrix);
 
         // Project each corner from NDC space to light view space, and calculate a min and max in light view space
@@ -1137,7 +1104,6 @@ define([
             Cartesian3.maximumByComponent(corner, max, max);
         }
 
-        // TODO : This is just an estimate, should take scene geometry into account
         // 2. Set bounding box back to include objects in the light's view
         max.z += 1000.0; // Note: in light space, a positive number is behind the camera
 
@@ -1204,18 +1170,18 @@ define([
         var frustum = new PerspectiveFrustum();
         frustum.fov = CesiumMath.PI_OVER_TWO;
         frustum.near = 1.0;
-        frustum.far = shadowMap._radius;
+        frustum.far = shadowMap._pointLightRadius;
         frustum.aspectRatio = 1.0;
 
         for (var i = 0; i < 6; ++i) {
-            var camera = shadowMap._passCameras[i];
+            var camera = shadowMap._passes[i].camera;
             camera.positionWC = shadowMap._shadowMapCamera.positionWC;
             camera.positionCartographic = frameState.mapProjection.ellipsoid.cartesianToCartographic(camera.positionWC, camera.positionCartographic);
             camera.directionWC = directions[i];
             camera.upWC = ups[i];
             camera.rightWC = rights[i];
 
-            Matrix4.computeView(camera.directionWC, camera.upWC, camera.rightWC, camera.positionWC, camera.viewMatrix);
+            Matrix4.computeView(camera.positionWC, camera.directionWC, camera.upWC, camera.rightWC, camera.viewMatrix);
             Matrix4.inverse(camera.viewMatrix, camera.inverseViewMatrix);
 
             camera.frustum = frustum;
@@ -1248,7 +1214,13 @@ define([
             var surfaceNormal = frameState.mapProjection.ellipsoid.geodeticSurfaceNormal(sceneCamera.positionWC, scratchCartesian1);
             var lightDirection = Cartesian3.negate(shadowMapCamera.directionWC, scratchCartesian2);
             var dot = Cartesian3.dot(surfaceNormal, lightDirection);
-            if (dot < 0.05) {
+
+            // Shadows start to fade out once the light gets closer to the horizon.
+            // At this point the globe uses vertex lighting alone to darken the surface.
+            var darknessAmount = CesiumMath.clamp(dot / 0.1, 0.0, 1.0);
+            shadowMap._darkness = CesiumMath.lerp(1.0, shadowMap.darkness, darknessAmount);
+
+            if (dot < 0.0) {
                 shadowMap._outOfView = true;
                 shadowMap._needsUpdate = false;
                 return;
@@ -1264,7 +1236,7 @@ define([
         } else if (shadowMap._isPointLight) {
             // Sphere-frustum intersection test
             boundingSphere.center = shadowMapCamera.positionWC;
-            boundingSphere.radius = shadowMap._radius;
+            boundingSphere.radius = shadowMap._pointLightRadius;
             shadowMap._outOfView = frameState.cullingVolume.computeVisibility(boundingSphere) === Intersect.OUTSIDE;
             shadowMap._needsUpdate = !shadowMap._outOfView && !shadowMap._boundingSphere.equals(boundingSphere);
             BoundingSphere.clone(boundingSphere, shadowMap._boundingSphere);
@@ -1315,7 +1287,7 @@ define([
 
         // Get the light position in eye coordinates
         Matrix4.multiplyByPoint(camera.viewMatrix, shadowMapCamera.positionWC, shadowMap._lightPositionEC);
-        shadowMap._lightPositionEC.w = shadowMap._radius;
+        shadowMap._lightPositionEC.w = shadowMap._pointLightRadius;
 
         // Get the near and far of the scene camera
         var near;
@@ -1330,6 +1302,7 @@ define([
         }
 
         shadowMap._sceneCamera = Camera.clone(camera, sceneCamera);
+        camera.frustum.clone(shadowMap._sceneCamera.frustum);
         shadowMap._sceneCamera.frustum.near = near;
         shadowMap._sceneCamera.frustum.far = far;
         shadowMap._distance = far - near;
@@ -1360,14 +1333,14 @@ define([
                 var up = this._shadowMapCamera.upWC;
                 this._shadowMapCullingVolume = this._shadowMapCamera.frustum.computeCullingVolume(position, direction, up);
 
-                if (this._numberOfPasses === 1) {
+                if (this._passes.length === 1) {
                     // Since there is only one pass, use the shadow map camera as the pass camera.
-                    this._passCameras[0].clone(this._shadowMapCamera);
+                    this._passes[0].camera.clone(this._shadowMapCamera);
                 }
             }
         }
 
-        if (this._numberOfPasses === 1) {
+        if (this._passes.length === 1) {
             // Transforms from eye space to shadow texture space.
             // Always requires an update since the scene camera constantly changes.
             var inverseView = this._sceneCamera.inverseViewMatrix;
@@ -1384,47 +1357,48 @@ define([
     };
 
     var scratchTexelStepSize = new Cartesian2();
-    var scratchUniformCartesian1 = new Cartesian4();
-    var scratchUniformCartesian2 = new Cartesian4();
 
     function combineUniforms(shadowMap, uniforms, isTerrain) {
         var bias = shadowMap._isPointLight ? shadowMap._pointBias : (isTerrain ? shadowMap._terrainBias : shadowMap._primitiveBias);
 
         var mapUniforms = {
-            u_shadowMapTexture :function() {
+            shadowMap_texture :function() {
                 return shadowMap._shadowMapTexture;
             },
-            u_shadowMapTextureCube : function() {
+            shadowMap_textureCube : function() {
                 return shadowMap._shadowMapTexture;
             },
-            u_shadowMapMatrix : function() {
+            shadowMap_matrix : function() {
                 return shadowMap._shadowMapMatrix;
             },
-            u_shadowMapCascadeSplits : function() {
+            shadowMap_cascadeSplits : function() {
                 return shadowMap._cascadeSplits;
             },
-            u_shadowMapCascadeMatrices : function() {
+            shadowMap_cascadeMatrices : function() {
                 return shadowMap._cascadeMatrices;
             },
-            u_shadowMapLightDirectionEC : function() {
+            shadowMap_lightDirectionEC : function() {
                 return shadowMap._lightDirectionEC;
             },
-            u_shadowMapLightPositionEC : function() {
+            shadowMap_lightPositionEC : function() {
                 return shadowMap._lightPositionEC;
             },
-            u_shadowMapCascadeDistances : function() {
+            shadowMap_cascadeDistances : function() {
                 return shadowMap._cascadeDistances;
             },
-            u_shadowMapTexelSizeDepthBiasAndNormalShadingSmooth : function() {
+            shadowMap_texelSizeDepthBiasAndNormalShadingSmooth : function() {
                 var texelStepSize = scratchTexelStepSize;
                 texelStepSize.x = 1.0 / shadowMap._textureSize.x;
                 texelStepSize.y = 1.0 / shadowMap._textureSize.y;
 
-                return Cartesian4.fromElements(texelStepSize.x, texelStepSize.y, bias.depthBias, bias.normalShadingSmooth, scratchUniformCartesian1);
+                return Cartesian4.fromElements(texelStepSize.x, texelStepSize.y, bias.depthBias, bias.normalShadingSmooth, this.combinedUniforms1);
             },
-            u_shadowMapNormalOffsetScaleDistanceMaxDistanceAndDarkness : function() {
-                return Cartesian4.fromElements(bias.normalOffsetScale, shadowMap._distance, shadowMap._maximumDistance, shadowMap.darkness, scratchUniformCartesian2);
-            }
+            shadowMap_normalOffsetScaleDistanceMaxDistanceAndDarkness : function() {
+                return Cartesian4.fromElements(bias.normalOffsetScale, shadowMap._distance, shadowMap._maximumDistance, shadowMap._darkness, this.combinedUniforms2);
+            },
+
+            combinedUniforms1 : new Cartesian4(),
+            combinedUniforms2 : new Cartesian4()
         };
 
         return combine(uniforms, mapUniforms, false);
@@ -1473,6 +1447,14 @@ define([
                 castRenderState = shadowMap._terrainRenderState;
             }
 
+            // Modify the render state for commands that do not use back-face culling, e.g. flat textured walls
+            var cullEnabled = command.renderState.cull.enabled;
+            if (!cullEnabled) {
+                castRenderState = clone(castRenderState, false);
+                castRenderState.cull.enabled = false;
+                castRenderState = RenderState.fromCache(castRenderState);
+            }
+
             castUniformMap = combineUniforms(shadowMap, command.uniformMap, isTerrain);
         }
 
@@ -1481,6 +1463,7 @@ define([
         result.uniformMap = castUniformMap;
 
         if (defined(skirtIndex)) {
+            // Don't render terrain skirts when casting into the shadow map. Render all indices of the tile up to the skirt index.
             result.count = skirtIndex;
         }
 

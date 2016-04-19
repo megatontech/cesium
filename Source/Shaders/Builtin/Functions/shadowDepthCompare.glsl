@@ -13,24 +13,12 @@ float czm_sampleShadowMap(sampler2D shadowMap, vec2 uv)
 #endif
 }
 
-float czm_shadowDepthCompare(samplerCube shadowMap, vec3 uv, float depth, float shadowDistance)
+float czm_shadowDepthCompare(samplerCube shadowMap, vec3 uv, float depth)
 {
-#ifdef USE_EXPONENTIAL_SHADOW_MAPS
-    float shadowDepth = czm_sampleShadowMap(shadowMap, uv);
-    float darknessFactor = 10.0 * shadowDistance;
-    return clamp(exp(darknessFactor * (shadowDepth - depth)), 0.0, 1.1);
-#else
     return step(depth, czm_sampleShadowMap(shadowMap, uv));
-#endif
 }
 
-float czm_shadowDepthCompare(sampler2D shadowMap, vec2 uv, float depth, float shadowDistance)
+float czm_shadowDepthCompare(sampler2D shadowMap, vec2 uv, float depth)
 {
-#ifdef USE_EXPONENTIAL_SHADOW_MAPS
-    float shadowDepth = czm_sampleShadowMap(shadowMap, uv);
-    float darknessFactor = 10.0 * shadowDistance;
-    return clamp(exp(darknessFactor * (shadowDepth - depth)), 0.0, 1.1);
-#else
     return step(depth, czm_sampleShadowMap(shadowMap, uv));
-#endif
 }
