@@ -220,7 +220,7 @@ var viewModel = {
     size : 1024,
     modelOptions : ['Wood Tower', 'Cesium Air', 'Transparent Box', 'Shadow Tester', 'Shadow Tester 2', 'Shadow Tester 3', 'Shadow Tester 4', 'Shadow Tester Point'],
     model : 'Shadow Tester',
-    locationOptions : ['Exton', 'Everest', 'Pinnacle PA', 'Seneca Rocks', 'Half Dome'],
+    locationOptions : ['Exton', 'Everest', 'Pinnacle PA', 'Seneca Rocks', 'Half Dome', 'Seattle 3D Tiles', 'NYC 3D Tiles'],
     location : 'Pinnacle PA',
     modelPositionOptions : ['Center', 'Ground', 'High', 'Higher', 'Space'],
     modelPosition : 'Center',
@@ -268,10 +268,10 @@ viewModel.lightSource = 'Freeform';
 viewModel.lightHorizon = 71.0;
 viewModel.lightAngle = 40.0;
 viewModel.distance = 10000.0;
-viewModel.location = 'Pinnacle PA';
+viewModel.location = 'Seattle 3D Tiles';
 viewModel.model = 'Shadow Tester';
 viewModel.modelPosition = 'Center';
-viewModel.terrain = true;
+viewModel.terrain = false;
 viewModel.terrainCast = true;
 
 var uiOptions = {
@@ -313,6 +313,16 @@ var uiOptions = {
         'Half Dome' : {
             'centerLongitude' : -2.0862479628,
             'centerLatitude' : 0.6587902522
+        },
+        'Seattle 3D Tiles' : {
+            'centerLongitude' : -2.1350979846,
+            'centerLatitude' : 0.8308849572,
+            'tileset' : 'http://localhost:8002/tilesets/Seattle'
+        },
+        'NYC 3D Tiles' : {
+            'centerLongitude' : -1.291646656,
+            'centerLatitude' : 0.7105724273,
+            'tileset' : 'http://localhost:8002/tilesets/NewYork'
         }
     }
 };
@@ -594,6 +604,10 @@ function resetShadows(shadowOptions) {
     createBoxRTC(position2);
     createSphere(position1);
 
+    if (Cesium.defined(location.tileset)) {
+        createTileset(location.tileset);
+    }
+
     // Add a grid of models
     if (viewModel.grid) {
         var spacing = 0.00002;
@@ -607,6 +621,12 @@ function resetShadows(shadowOptions) {
             createModel(uiOptions.modelUrls[viewModel.model], position);
         }
     }
+}
+
+function createTileset(url) {
+    scene.primitives.add(new Cesium.Cesium3DTileset({
+        url : url
+    }));
 }
 
 function createModel(url, origin) {
