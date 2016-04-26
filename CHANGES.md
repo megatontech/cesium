@@ -10,9 +10,6 @@ Change Log
    * `Cesium3DTileContent`
    * `Cesium3DTileFeature`
 
-TODO: this is not finished yet:
-* Added support for glTF compression using the `mesh_compression_open3dgc` glTF extension.
-
 ### Shadows TODO
 * Added `castShadows` and `receiveShadows` properties to `Primitive`, and options to the `Primitive` constructor.
 * Added `castShadows` and `receiveShadows` properties to `Model`, and options to the `Model` constructor and `Model.fromGltf`.
@@ -28,9 +25,12 @@ TODO: this is not finished yet:
   *
 * Fixed issue causing the sun not to render. [#3801](https://github.com/AnalyticalGraphicsInc/cesium/pull/3801)
 * Added ability to import and export Sandcastle example using GitHub Gists. [#3795](https://github.com/AnalyticalGraphicsInc/cesium/pull/3795)
+* Added `PolygonGraphics.closeTop`, `PolygonGraphics.closeBottom`, and `PolygonGeometry` options for creating an extruded polygon without a top or bottom.
 * Fixed issue where `Camera.flyTo` does not go to the rectangle. [#3688](https://github.com/AnalyticalGraphicsInc/cesium/issues/3688)
 * Fixed issue causing the fog to go dark and the atmosphere to flicker when the camera clips the globe. [#3178](https://github.com/AnalyticalGraphicsInc/cesium/issues/3178)
 * Fixed a bug that caused an exception and rendering to stop when using `ArcGisMapServerImageryProvider` to connect to a MapServer specifying the Web Mercator projection and a fullExtent bigger than the valid extent of the projection. [#3854](https://github.com/AnalyticalGraphicsInc/cesium/pull/3854)
+* Fixed issue causing an exception when switching scene modes with an active KML network link. [#3865](https://github.com/AnalyticalGraphicsInc/cesium/issues/3865)
+* Added support for polyline arrow material to `CzmlDataSource` [#3860](https://github.com/AnalyticalGraphicsInc/cesium/pull/3860)
 
 ### 1.20 - 2016-04-01
 
