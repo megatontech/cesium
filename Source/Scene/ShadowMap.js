@@ -29,6 +29,7 @@ define([
         '../Core/Quaternion',
         '../Core/SphereOutlineGeometry',
         '../Renderer/ClearCommand',
+        '../Renderer/ContextLimits',
         '../Renderer/CubeMap',
         '../Renderer/DrawCommand',
         '../Renderer/Framebuffer',
@@ -83,6 +84,7 @@ define([
         Quaternion,
         SphereOutlineGeometry,
         ClearCommand,
+        ContextLimits,
         CubeMap,
         DrawCommand,
         Framebuffer,
@@ -123,7 +125,8 @@ define([
      * @param {Boolean} [options.pointLightRadius=100.0] Radius of the point light.
      * @param {Boolean} [options.cascadesEnabled=true] Use multiple shadow maps to cover different partitions of the view frustum.
      * @param {Number} [options.numberOfCascades=4] The number of cascades to use for the shadow map. Supported values are one and four.
-     * @param {Number} [options.size=1024] The width and height, in pixels, of each shadow map.
+     * @param {Number} [options.maximumDistance=5000.0] The maximum distance used for generating cascaded shadows. Lower values improve shadow quality.
+     * @param {Number} [options.size=2048] The width and height, in pixels, of each shadow map.
      * @param {Boolean} [options.softShadows=false] Whether percentage-closer-filtering is enabled for producing softer shadows.
      * @param {Number} [options.darkness=0.3] The shadow darkness.
      *
@@ -204,9 +207,6 @@ define([
         this._lightPositionEC = new Cartesian4();
         this._distance = 0.0;
 
-        this._shadowMapSize = defaultValue(options.size, 1024);
-        this._textureSize = new Cartesian2(this._shadowMapSize, this._shadowMapSize);
-
         this._lightCamera = options.lightCamera;
         this._shadowMapCamera = new ShadowMapCamera();
         this._shadowMapCullingVolume = undefined;
@@ -219,8 +219,10 @@ define([
         this._cascadesEnabled = this._isPointLight ? false : defaultValue(options.cascadesEnabled, true);
         this._numberOfCascades = !this._cascadesEnabled ? 0 : defaultValue(options.numberOfCascades, 4);
         this._fitNearFar = true;
-        this._maximumDistance = 5000.0;
-        this._maximumCascadeDistances = [50.0, 300.0, Number.MAX_VALUE, Number.MAX_VALUE];
+        this._maximumDistance = defaultValue(options.maximumDistance, 5000.0);
+        this._maximumCascadeDistances = [25.0, 150.0, 700.0, Number.MAX_VALUE];
+
+        this._textureSize = new Cartesian2();
 
         this._isSpotLight = false;
         if (this._cascadesEnabled) {
@@ -282,8 +284,13 @@ define([
 
         this._clearPassState = new PassState(context);
 
-        this.setSize(this._shadowMapSize);
+        var size = defaultValue(options.size, 2048);
+        this.setSize(size);
     }
+
+    // Global maximum shadow distance used to prevent far off receivers from extending
+    // the shadow far plane. E.g. setting a tighter near/far when viewing a satellite in space.
+    ShadowMap.MAXIMUM_DISTANCE = 20000.0;
 
     function ShadowPass(context) {
         this.camera = new ShadowMapCamera();
@@ -526,15 +533,15 @@ define([
     function createFramebufferCube(shadowMap, context) {
         var depthRenderbuffer = new Renderbuffer({
             context : context,
-            width : shadowMap._shadowMapSize,
-            height : shadowMap._shadowMapSize,
+            width : shadowMap._textureSize.x,
+            height : shadowMap._textureSize.y,
             format : RenderbufferFormat.DEPTH_COMPONENT16
         });
 
         var cubeMap = new CubeMap({
             context : context,
-            width : shadowMap._shadowMapSize,
-            height : shadowMap._shadowMapSize,
+            width : shadowMap._textureSize.x,
+            height : shadowMap._textureSize.y,
             pixelFormat : PixelFormat.RGBA,
             pixelDatatype : PixelDatatype.UNSIGNED_BYTE,
             sampler : createSampler()
@@ -598,12 +605,12 @@ define([
     }
 
     ShadowMap.prototype.setSize = function(size) {
-        this._shadowMapSize = size;
         var passes = this._passes;
         var numberOfPasses = passes.length;
         var textureSize = this._textureSize;
 
         if (this._isPointLight) {
+            size = (ContextLimits.maximumCubeMapSize >= size) ? size : ContextLimits.maximumCubeMapSize;
             textureSize.x = size;
             textureSize.y = size;
             var faceViewport = new BoundingRectangle(0, 0, size, size);
@@ -617,6 +624,7 @@ define([
             // +----+
             // |  1 |
             // +----+
+            size = (ContextLimits.maximumTextureSize >= size) ? size : ContextLimits.maximumTextureSize;
             textureSize.x = size;
             textureSize.y = size;
             passes[0].passState.viewport = new BoundingRectangle(0, 0, size, size);
@@ -626,6 +634,7 @@ define([
             // +----+----+
             // |  1 |  2 |
             // +----+----+
+            size = (ContextLimits.maximumTextureSize >= size * 2) ? size : ContextLimits.maximumTextureSize / 2;
             textureSize.x = size * 2;
             textureSize.y = size * 2;
             passes[0].passState.viewport = new BoundingRectangle(0, 0, size, size);
@@ -955,7 +964,7 @@ define([
     var scratchFrustum = new PerspectiveFrustum();
     var scratchCascadeDistances = new Array(4);
 
-    function computeCascades(shadowMap) {
+    function computeCascades(shadowMap, frameState) {
         var shadowMapCamera = shadowMap._shadowMapCamera;
         var sceneCamera = shadowMap._sceneCamera;
         var cameraNear = sceneCamera.frustum.near;
@@ -964,9 +973,19 @@ define([
 
         // Split cascades. Use a mix of linear and log splits.
         var i;
-        var lambda = 0.9;
         var range = cameraFar - cameraNear;
         var ratio = cameraFar / cameraNear;
+
+        var lambda = 0.9;
+        var clampCascadeDistances = false;
+
+        // When the camera is close to a relatively small model, provide more detail in the closer cascades.
+        // If the camera is near or inside a large model, such as the root tile of a city, then use the default values.
+        // To get the most accurate cascade splits we would need to find the min and max values from the depth texture.
+        if (frameState.shadowHints.closestObjectSize < 200.0) {
+            clampCascadeDistances = true;
+            lambda = 0.9;
+        }
 
         var cascadeDistances = scratchCascadeDistances;
         var splits = scratchSplits;
@@ -983,8 +1002,7 @@ define([
             cascadeDistances[i] = split - splits[i];
         }
 
-        // When the camera is close enough to something provide more detail in the closer cascades
-        if (cameraNear < 100.0) {
+        if (clampCascadeDistances) {
             // Clamp each cascade to its maximum distance
             for (i = 0; i < numberOfCascades; ++i) {
                 cascadeDistances[i] = Math.min(cascadeDistances[i], shadowMap._maximumCascadeDistances[i]);
@@ -1294,8 +1312,8 @@ define([
         var far;
         if (shadowMap._fitNearFar) {
             // shadowFar can be very large, so limit to shadowMap._maximumDistance
-            near = Math.min(frameState.shadowNear, shadowMap._maximumDistance);
-            far = Math.min(frameState.shadowFar, shadowMap._maximumDistance);
+            near = Math.min(frameState.shadowHints.nearPlane, shadowMap._maximumDistance);
+            far = Math.min(frameState.shadowHints.farPlane, shadowMap._maximumDistance);
         } else {
             near = camera.frustum.near;
             far = shadowMap._maximumDistance;
@@ -1322,7 +1340,7 @@ define([
                 fitShadowMapToScene(this, frameState);
 
                 if (this._numberOfCascades > 1) {
-                    computeCascades(this);
+                    computeCascades(this, frameState);
                 }
             }
 
@@ -1404,7 +1422,7 @@ define([
         return combine(uniforms, mapUniforms, false);
     }
 
-    function createCastDerivedCommand(shadowMap, command, context, skirtIndex, oldShaderId, result) {
+    function createCastDerivedCommand(shadowMap, command, context, oldShaderId, result) {
         var castShader;
         var castRenderState;
         var castUniformMap;
@@ -1462,11 +1480,6 @@ define([
         result.renderState = castRenderState;
         result.uniformMap = castUniformMap;
 
-        if (defined(skirtIndex)) {
-            // Don't render terrain skirts when casting into the shadow map. Render all indices of the tile up to the skirt index.
-            result.count = skirtIndex;
-        }
-
         return result;
     }
 
@@ -1481,10 +1494,8 @@ define([
         var isTerrain = command.pass === Pass.GLOBE;
 
         var hasTerrainNormal = false;
-        var skirtIndex;
         if (isTerrain) {
             hasTerrainNormal = command.owner.data.pickTerrain.mesh.encoding.hasVertexNormals;
-            skirtIndex = command.owner.data.terrainData._skirtIndex;
         }
 
         if (command.castShadows) {
@@ -1499,7 +1510,7 @@ define([
             castCommands.length = shadowMapLength;
 
             for (var i = 0; i < shadowMapLength; ++i) {
-                castCommands[i] = createCastDerivedCommand(shadowMaps[i], command, context, skirtIndex, oldShaderId, castCommands[i]);
+                castCommands[i] = createCastDerivedCommand(shadowMaps[i], command, context, oldShaderId, castCommands[i]);
             }
 
             result.castShaderProgramId = command.shaderProgram.id;

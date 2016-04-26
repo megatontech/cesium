@@ -218,7 +218,7 @@ var viewModel = {
     lightSource : 'Freeform',
     sizeOptions : [256, 512, 1024, 2048],
     size : 1024,
-    modelOptions : ['Wood Tower', 'Cesium Air', 'Transparent Box', 'Shadow Tester', 'Shadow Tester 2', 'Shadow Tester 3', 'Shadow Tester 4', 'Shadow Tester Point'],
+    modelOptions : ['Wood Tower', 'Cesium Air', 'Cesium Man', 'Transparent Box', 'Shadow Tester', 'Shadow Tester 2', 'Shadow Tester 3', 'Shadow Tester 4', 'Shadow Tester Point'],
     model : 'Shadow Tester',
     locationOptions : ['Exton', 'Everest', 'Pinnacle PA', 'Seneca Rocks', 'Half Dome', 'Seattle 3D Tiles', 'NYC 3D Tiles'],
     location : 'Pinnacle PA',
@@ -271,7 +271,7 @@ viewModel.distance = 10000.0;
 viewModel.location = 'Seattle 3D Tiles';
 viewModel.model = 'Shadow Tester';
 viewModel.modelPosition = 'Center';
-viewModel.terrain = false;
+viewModel.terrain = true;
 viewModel.terrainCast = true;
 
 var uiOptions = {
@@ -286,6 +286,7 @@ var uiOptions = {
     modelUrls : {
         'Wood Tower' : '../../SampleData/models/WoodTower/Wood_Tower.gltf',
         'Cesium Air' : '../../SampleData/models/CesiumAir/Cesium_Air.glb',
+        'Cesium Man' : '../../SampleData/models/CesiumMan/Cesium_Man.glb',
         'Transparent Box' : '../../SampleData/models/ShadowTester/Shadow_Transparent.gltf',
         'Shadow Tester' : '../../SampleData/models/ShadowTester/Shadow_Tester.gltf',
         'Shadow Tester 2' : '../../SampleData/models/ShadowTester/Shadow_Tester_2.gltf',
